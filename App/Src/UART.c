@@ -1,30 +1,37 @@
 #include "UART.h"
 #include "Modbus.h"
 #include "ModbusRegisters.h"
+#include "Tim.h"
+#include "stdbool.h"
 #include "stdint.h"
 #include "stm32f1xx.h"
 #include <math.h>
 
 static volatile uint8_t uart_tx_busy = 0;
 
+static bool is_frame_start = false;
+static bool is_frame_error = false;
+static uint16_t t1_us = 0;
+
 uint8_t uart_tx_buffer[UART_TX_BUFFER_SIZE];
 uint8_t uart_rx_buffer[UART_RX_BUFFER_SIZE];
+uint8_t rx_index = 0;
 
-void uart_init(uint32_t baudrate)
+void uart_init(uint32_t baudrate, uint16_t parity_bit, uint16_t stop_bit)
 {
 
     RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
     RCC->AHBENR |= RCC_AHBENR_DMA1EN;
-
+    Tim2_Init();
     uart_dma_tx_init();
-    uart_dma_rx_init();
-
+    // uart_dma_rx_init();
+    t1_us = uart_calculate_us(baudrate, parity_bit, stop_bit);
     uart_set_baudrate(baudrate);
     uart_cr_init();
     uart_cr_start();
 
-    uart_dma_rx_start();
-    // Implementation for UART initialization
+    // uart_dma_rx_start();
+    //  Implementation for UART initialization
 }
 
 bool uart_change_setings()
@@ -32,6 +39,7 @@ bool uart_change_setings()
     uart_cr_stop();
     uart_set_baudrate(get_baud_from_code(connection_data_active.baudrate_code));
     uart_cr_start();
+    return true;
 }
 
 uint8_t uart_send(const uint8_t *data, uint16_t len)
@@ -62,30 +70,119 @@ void uart_irq_handler(void)
 {
     uint32_t sr = USART1->SR;
 
-    if (sr & USART_SR_IDLE)
+    if (sr & USART_SR_ORE)
     {
-        volatile uint32_t tmp;
-
-        tmp = USART1->SR;
-        tmp = USART1->DR;
+        volatile uint32_t tmp = USART1->DR;
         (void)tmp;
 
-        DMA1_Channel5->CCR &= ~DMA_CCR_EN;
+        is_frame_error = true;
 
-        uint16_t received_len = UART_RX_BUFFER_SIZE - DMA1_Channel5->CNDTR;
-
-        if ((received_len > 0U) && (received_len <= UART_RX_BUFFER_SIZE))
-        {
-            uint16_t uart_tx_len = 0U;
-            uint8_t result = modbus_read_frame(uart_rx_buffer, received_len, uart_tx_buffer, &uart_tx_len);
-            if (result == MB_EX_NONE)
-            {
-                uart_send(uart_tx_buffer, uart_tx_len);
-            }
-        }
-
-        uart_dma_rx_start();
+        return;
     }
+
+    if (sr & USART_SR_RXNE)
+    {
+        uint8_t byte = (uint8_t)USART1->DR;
+
+        uint16_t rx_byte_timeout = 5U * t1_us / 2U;
+        uint16_t frame_timeout = 9U * t1_us / 2U;
+
+        if (is_frame_start)
+        {
+            uint16_t counter = TIM2->CNT;
+
+            if (counter > rx_byte_timeout)
+            {
+                is_frame_error = true;
+            }
+
+            if (rx_index < UART_RX_BUFFER_SIZE)
+            {
+                uart_rx_buffer[rx_index++] = byte;
+            }
+            else
+            {
+                is_frame_error = true;
+            }
+
+            Tim2_Start(frame_timeout);
+        }
+        else
+        {
+            if (rx_index < UART_RX_BUFFER_SIZE)
+            {
+                uart_rx_buffer[rx_index++] = byte;
+            }
+            else
+            {
+                is_frame_error = true;
+            }
+
+            is_frame_start = true;
+
+            Tim2_Start(frame_timeout);
+        }
+    }
+}
+
+static void clear_rx_array(void)
+{
+
+    for (uint8_t i = 0; i < rx_index; i++)
+    {
+        uart_rx_buffer[i] = 0U;
+    }
+    rx_index = 0;
+}
+
+void uart_tim2_irq_handler(void)
+{
+    // тут обработака кадра
+    // если больше чем нужно то отбрасываем кадр
+    // если кадр норм то читаем и вызваем отбработчик
+    // если нет то мигаем светодиодом
+
+    if ((rx_index > 0U) && (rx_index <= UART_RX_BUFFER_SIZE))
+    {
+        uint16_t uart_tx_len = 0U;
+        uint8_t result = modbus_read_frame(uart_rx_buffer, rx_index, uart_tx_buffer, &uart_tx_len);
+        if (result == MB_EX_NONE && !is_frame_error)
+        {
+            uart_send(uart_tx_buffer, uart_tx_len);
+        }
+        else
+        {
+            // ошибка
+        }
+        // rx_index = 0;
+        clear_rx_array();
+    }
+
+    is_frame_error = false;
+    is_frame_start = false;
+}
+
+uint16_t uart_calculate_us(uint32_t baudrate,
+                           uint16_t parity_bit,
+                           uint16_t stop_bit)
+{
+    uint8_t Nstop;
+
+    if (stop_bit > 1U)
+    {
+        Nstop = 2U;
+    }
+    else
+    {
+        Nstop = 1U;
+    }
+
+    uint16_t N = 1U + 8U + parity_bit + Nstop;
+
+    uint16_t t =
+        (uint16_t)(((uint32_t)N * 1000000U) / baudrate);
+
+    return t;
 }
 
 void uart_dma_tx_irq_handler(void)
@@ -142,11 +239,12 @@ static void uart_cr_init(void)
     USART1->CR2 = 0;
     USART1->CR3 = 0;
 
-    USART1->CR1 |= USART_CR1_IDLEIE |
-                   USART_CR1_TE |
-                   USART_CR1_RE;
+    USART1->CR1 |=
+        USART_CR1_TE |
+        USART_CR1_RE |
+        USART_CR1_RXNEIE;
 
-    USART1->CR3 |= USART_CR3_DMAR;
+    // USART1->CR3 |= USART_CR3_DMAR;
 
     NVIC_SetPriority(USART1_IRQn, 5);
     NVIC_ClearPendingIRQ(USART1_IRQn);

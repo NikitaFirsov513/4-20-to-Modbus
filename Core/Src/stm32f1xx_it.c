@@ -186,6 +186,7 @@ void SysTick_Handler(void)
 /**
  * @brief This function handles TIM4 global interrupt.
  */
+
 void TIM4_IRQHandler(void)
 {
     /* USER CODE BEGIN TIM4_IRQn 0 */
@@ -201,6 +202,11 @@ void TIM4_IRQHandler(void)
 void DMA1_Channel1_IRQHandler(void)
 {
     Sensor_DMA_IRQHandler();
+}
+
+void TIM2_IRQHandler(void)
+{
+    uart_tim2_irq_handler();
 }
 
 void USART1_IRQHandler(void)

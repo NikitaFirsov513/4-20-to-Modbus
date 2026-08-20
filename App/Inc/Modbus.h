@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include "stm32f103xb.h"
 
 void modbus_init(void);
 

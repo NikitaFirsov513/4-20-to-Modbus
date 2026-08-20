@@ -266,14 +266,14 @@ void App_Start(void)
     bool is_settings_mem = modbus_verify_crc((uint8_t *)config_flash_ptr, 10U);
     if (is_settings_mem)
     {
-        uart_init(get_baud_from_code(config_flash_ptr->baudrate_code));
-    }
+        uart_init(get_baud_from_code(config_flash_ptr->baudrate_code), 0, 1);
+    } 
     else
     {
         save_default_connection_data(config_flash_ptr);
-        uart_init(get_baud_from_code(config_flash_ptr->baudrate_code));
+        uart_init(get_baud_from_code(config_flash_ptr->baudrate_code), 0, 1);
     }
-    
+
     modbus_init();
 
     for (;;)

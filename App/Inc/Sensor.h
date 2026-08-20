@@ -1,4 +1,5 @@
 #pragma once
+#include "stm32f103xb.h"
 
 void Sensor_TIM3_Init(void);
 void Sensor_TIM3_Start(void);
