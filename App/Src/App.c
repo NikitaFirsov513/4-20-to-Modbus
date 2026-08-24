@@ -266,21 +266,21 @@ void App_Start(void)
     bool is_settings_mem = modbus_verify_crc((uint8_t *)config_flash_ptr, 10U);
     if (is_settings_mem)
     {
-        uart_init(get_baud_from_code(config_flash_ptr->baudrate_code), 0, 1);
-    } 
+        uart_init(get_baud_from_code(config_flash_ptr->baudrate_code), config_flash_ptr->parity_code, config_flash_ptr->stop_bits);
+    }
     else
     {
         save_default_connection_data(config_flash_ptr);
-        uart_init(get_baud_from_code(config_flash_ptr->baudrate_code), 0, 1);
+        uart_init(get_baud_from_code(config_flash_ptr->baudrate_code), config_flash_ptr->parity_code, config_flash_ptr->stop_bits);
     }
 
     modbus_init();
 
+    xTaskCreate(AdcTask, "adc", 256, NULL, 2, NULL);
+    vTaskStartScheduler();
+
     for (;;)
     {
     }
-
-    // xTaskCreate(AdcTask, "adc", 256, NULL, 2, NULL);
-    // vTaskStartScheduler();
     // Error_Handler();
 }

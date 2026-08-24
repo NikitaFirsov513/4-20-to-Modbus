@@ -22,11 +22,13 @@ void uart_init(uint32_t baudrate, uint16_t parity_bit, uint16_t stop_bit)
 
     RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
     RCC->AHBENR |= RCC_AHBENR_DMA1EN;
+
     Tim2_Init();
     uart_dma_tx_init();
     // uart_dma_rx_init();
     t1_us = uart_calculate_us(baudrate, parity_bit, stop_bit);
     uart_set_baudrate(baudrate);
+    uart_set_parity(parity_bit);
     uart_cr_init();
     uart_cr_start();
 
@@ -37,7 +39,10 @@ void uart_init(uint32_t baudrate, uint16_t parity_bit, uint16_t stop_bit)
 bool uart_change_setings()
 {
     uart_cr_stop();
+
     uart_set_baudrate(get_baud_from_code(connection_data_active.baudrate_code));
+    uart_set_parity(connection_data_active.parity_code);
+    uart_set_stopbits(connection_data_active.stop_bits);
     uart_cr_start();
     return true;
 }
@@ -157,7 +162,6 @@ void uart_tim2_irq_handler(void)
         // rx_index = 0;
         clear_rx_array();
     }
-
     is_frame_error = false;
     is_frame_start = false;
 }
@@ -271,6 +275,63 @@ static void uart_set_baudrate(uint32_t baudrate)
     uint32_t brr = (UART_PCLK_HZ + (baudrate / 2U)) / baudrate;
 
     USART1->BRR = (uint16_t)brr;
+}
+
+static void uart_set_parity(uint16_t parity)
+{
+    switch (parity)
+    {
+    case MB_PARITY_NONE:
+        USART1->CR1 &= ~USART_CR1_PCE;
+        break;
+
+    case MB_PARITY_EVEN:
+        USART1->CR1 |= USART_CR1_PCE;
+        USART1->CR1 &= ~USART_CR1_PS;
+        USART1->CR1 |= USART_CR1_M;
+        break;
+
+    case MB_PARITY_ODD:
+        USART1->CR1 |= USART_CR1_PCE;
+        USART1->CR1 |= USART_CR1_PS;
+        USART1->CR1 |= USART_CR1_M;
+        break;
+
+    default:
+        USART1->CR1 &= ~USART_CR1_PCE;
+        break;
+    }
+}
+
+static void uart_set_stopbits(uint16_t stop_bits)
+{
+
+    // 00 → 1 stop bit 01 → 0.5 stop bit 10 → 2 stop bits 11 → 1.5 stop bit
+    switch (stop_bits)
+    {
+    case 0U:
+        /* code */
+        USART1->CR2 &= ~USART_CR2_STOP_1;
+        USART1->CR2 &= ~USART_CR2_STOP;
+        break;
+    case 1U:
+        /* code */
+        USART1->CR2 &= ~USART_CR2_STOP_1;
+        USART1->CR2 |= USART_CR2_STOP;
+        break;
+    case 2U:
+        /* code */
+        USART1->CR2 |= USART_CR2_STOP_1;
+        USART1->CR2 &= ~USART_CR2_STOP;
+        break;
+    case 3U:
+        /* code */
+        USART1->CR2 |= USART_CR2_STOP_1;
+        USART1->CR2 |= USART_CR2_STOP;
+        break;
+    default:
+        break;
+    }
 }
 
 static void uart_dma_init(void)

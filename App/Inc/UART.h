@@ -22,6 +22,9 @@ uint16_t uart_calculate_us(uint32_t baudrate, uint16_t parity_bit, uint16_t stop
 bool uart_change_setings();
 
 static void uart_set_baudrate(uint32_t baudrate);
+static void uart_set_parity(uint16_t parity);
+static void uart_set_stopbits(uint16_t stop_bits);
+
 static void uart_cr_init(void);
 static void uart_cr_start(void);
 static void uart_cr_stop(void);

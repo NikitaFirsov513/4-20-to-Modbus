@@ -46,10 +46,11 @@ uint8_t modbus_registers_write_one(uint16_t reg_address, uint16_t value)
     {
     case MB_REG_SAVE_CONFIG: {
         // Save configuration to non-volatile memory
-
+        // нужно сделать чтобы устанавливать 1
         // проверка логичности
         connection_data_active = connection_data;
-        uart_change_setings(connection_data_active.baudrate_code);
+        uart_change_setings();
+
         return MB_EX_NONE;
     }
 

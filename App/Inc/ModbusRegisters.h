@@ -27,20 +27,21 @@
 #define MB_EX_ILLEGAL_DATA_VALUE    3U
 #define MB_EX_SLAVE_DEVICE_FAILURE  4U
 
-#define MB_BAUD_1200                0
-#define MB_BAUD_2400                1
-#define MB_BAUD_4800                2
-#define MB_BAUD_9600                3
-#define MB_BAUD_19200               4
-#define MB_BAUD_38400               5
-#define MB_BAUD_57600               6
-#define MB_BAUD_115200              7
+#define MB_BAUD_1200                0U
+#define MB_BAUD_2400                1U
+#define MB_BAUD_4800                2U
+#define MB_BAUD_9600                3U
+#define MB_BAUD_19200               4U
+#define MB_BAUD_38400               5U
+#define MB_BAUD_57600               6U
+#define MB_BAUD_115200              7U
 
-#define MB_PARITY_NONE              0
-#define MB_PARITY_EVEN              1
-#define MB_PARITY_ODD               2
+#define MB_PARITY_NONE              0U
+#define MB_PARITY_EVEN              1U
+#define MB_PARITY_ODD               2U
+
 typedef struct
-{
+{   
     uint16_t slave_address;
     uint16_t baudrate_code;
     uint16_t parity_code;

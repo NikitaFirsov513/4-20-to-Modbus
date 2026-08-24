@@ -206,7 +206,12 @@ void DMA1_Channel1_IRQHandler(void)
 
 void TIM2_IRQHandler(void)
 {
-    uart_tim2_irq_handler();
+    if ((TIM2->SR & TIM_SR_UIF) != 0U)
+    {
+        TIM2->SR &= ~TIM_SR_UIF;
+
+        uart_tim2_irq_handler();
+    }
 }
 
 void USART1_IRQHandler(void)
