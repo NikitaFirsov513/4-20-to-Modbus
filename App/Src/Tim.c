@@ -51,6 +51,8 @@ void Tim2_Init(void)
 
 void Tim2_Start(uint16_t arr)
 {
+    NVIC_SetPriority(TIM2_IRQn, 5);
+    NVIC_ClearPendingIRQ(TIM2_IRQn);
     NVIC_EnableIRQ(TIM2_IRQn);
     TIM2->CR1 &= ~TIM_CR1_CEN;
     TIM2->DIER |= TIM_DIER_UIE;

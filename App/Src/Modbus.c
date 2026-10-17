@@ -1,7 +1,9 @@
 #include "Modbus.h"
+#include "FreeRTOS.h"
+#include "LedTask.h"
 #include "ModbusRegisters.h"
 #include "UART.h"
-
+#include "queue.h"
 void modbus_init(void)
 {
     modbus_registers_init();
@@ -79,6 +81,10 @@ uint8_t modbus_read_frame(uint8_t *frame, uint16_t len, uint8_t *tx, uint16_t *t
         {
 
             return result;
+        }
+        else
+        {
+            LedTask_SendMessageFromISR(LED_MESSAGE_OK);
         }
     }
 

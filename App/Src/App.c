@@ -1,6 +1,7 @@
 #include "App.h"
 #include "AdcTask.h"
 #include "FreeRTOS.h"
+#include "LedTask.h"
 #include "Modbus.h"
 #include "ModbusRegisters.h"
 #include "Sensor.h"
@@ -277,6 +278,7 @@ void App_Start(void)
     modbus_init();
 
     xTaskCreate(AdcTask, "adc", 256, NULL, 2, NULL);
+    LedTaskStart();
     vTaskStartScheduler();
 
     for (;;)
