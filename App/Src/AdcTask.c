@@ -1,43 +1,34 @@
 #include "AdcTask.h"
-#include "FreeRTOS.h"
+#include "Sensor.h"
+#include "SensorMath.h"
 #include "ModbusRegisters.h"
-#include "adc.h"
-#include "gpio.h"
-#include "main.h"
-#include "stdint.h"
+#include "Health.h"
+#include "FreeRTOS.h"
 #include "task.h"
-static uint16_t adc;
-
-uint16_t ADC1_Read(void)
-{
-
-    LL_ADC_REG_StartConversionSWStart(ADC1);
-
-    while (!LL_ADC_IsActiveFlag_EOS(ADC1))
-    {
-    }
-
-    return LL_ADC_REG_ReadConversionData12(ADC1);
-}
-
+#include "stm32f1xx.h"
 void AdcTask(void *argument)
 {
-    TickType_t lastWakeTime = xTaskGetTickCount();
-
-    for (;;)
-    {
-
-        adc = ADC1_Read();
-
-        float voltage = (float)adc * 3.3f / 4095.0f;
-
-        float current_mA = 4.0f + (voltage - 0.17f) * 16.0f / (3.17f - 0.17f);
-
-        ADC_data.current_uA = current_mA * 1000;
-        ADC_data.adc_mv = voltage * 1000;
-        ADC_data.adc_raw = adc;
-        ADC_data.status = 0U;
-
-        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(100));
+    (void)argument;
+    TickType_t last_wake = xTaskGetTickCount();
+    uint32_t previous_sequence = 0U;
+    unsigned missing = 0U;
+    SensorStatusFilter filter = {0};
+    for (;;) {
+        uint16_t raw; uint32_t sequence; bool dma_error;
+        Sensor_Read(&raw,&sequence,&dma_error);
+        ADC_data_t data;
+        Sensor_Convert(raw,(GPIOA->IDR & GPIO_IDR_IDR1) != 0U,&data);
+        bool fresh = sequence != previous_sequence && !dma_error;
+        if (!fresh) { data.status |= ADC_STATUS_STALE; ++missing; }
+        else { missing = 0U; Health_Heartbeat(HEALTH_ADC); }
+        if (dma_error) data.status |= ADC_STATUS_DMA_ERROR;
+        if (fresh) Sensor_FilterStatus(&filter,&data);
+        previous_sequence = sequence;
+        modbus_publish_adc(&data);
+        if (dma_error || missing >= 3U) {
+            Sensor_Recover();
+            missing = 0U;
+        }
+        vTaskDelayUntil(&last_wake,pdMS_TO_TICKS(100));
     }
 }

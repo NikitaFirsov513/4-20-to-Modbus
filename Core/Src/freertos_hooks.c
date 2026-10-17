@@ -1,23 +1,9 @@
 #include "FreeRTOS.h"
 #include "task.h"
-
-void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+#include "Health.h"
+void vApplicationIdleHook(void) { Health_Idle(); }
+void vApplicationStackOverflowHook(TaskHandle_t task, char *name)
 {
-    (void)xTask;
-    (void)pcTaskName;
-
-    taskDISABLE_INTERRUPTS();
-
-    while (1)
-    {
-    }
+    (void)task; (void)name; Health_Panic(FAULT_STACK);
 }
-
-void vApplicationMallocFailedHook(void)
-{
-    taskDISABLE_INTERRUPTS();
-
-    while (1)
-    {
-    }
-}
+void vApplicationMallocFailedHook(void) { Health_Panic(FAULT_HEAP); }

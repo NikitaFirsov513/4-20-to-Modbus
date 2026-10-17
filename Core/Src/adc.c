@@ -73,7 +73,7 @@ void MX_ADC1_Init(void)
   LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_0, LL_ADC_SAMPLINGTIME_239CYCLES_5);
   /* USER CODE BEGIN ADC1_Init 2 */
 
-    LL_RCC_SetADCClockSource(LL_RCC_ADC_CLKSRC_PCLK2_DIV_6);
+    LL_RCC_SetADCClockSource(LL_RCC_ADC_CLKSRC_PCLK2_DIV_8);
 
     LL_ADC_REG_SetTriggerSource(
         ADC1,

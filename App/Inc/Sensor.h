@@ -14,3 +14,8 @@ void Sensor_DMA_Start(void);
 void Sensor_DMA_Stop(void);
 
 void Sensor_DMA_IRQHandler(void);
+
+#include <stdbool.h>
+void Sensor_Read(uint16_t *raw, uint32_t *sequence, bool *dma_error);
+
+void Sensor_Recover(void);

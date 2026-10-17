@@ -1,0 +1,69 @@
+{
+  "date": "2026-10-17",
+  "scope": "Measured board only; calibrator model and accuracy not recorded",
+  "method": "Linear interpolation between mean raw ADC counts at 4 and 20 mA",
+  "points": [
+    {
+      "setpoint_ma": 4,
+      "raw_samples": [
+        233,
+        234,
+        233,
+        233,
+        233,
+        233,
+        233,
+        233,
+        233,
+        233
+      ],
+      "mean_raw": 233.1,
+      "mean_before_calibration_ma": 3.9254,
+      "all_status_clear": true,
+      "role": "calibration"
+    },
+    {
+      "setpoint_ma": 10,
+      "raw_samples": [
+        1615,
+        1615,
+        1615,
+        1615,
+        1615,
+        1615,
+        1615,
+        1615,
+        1614,
+        1615
+      ],
+      "mean_raw": 1614.9,
+      "mean_before_calibration_ma": 9.8736,
+      "all_status_clear": true,
+      "role": "validation"
+    },
+    {
+      "setpoint_ma": 20,
+      "raw_samples": [
+        3923,
+        3922,
+        3923,
+        3922,
+        3923,
+        3923,
+        3923,
+        3922,
+        3922,
+        3922
+      ],
+      "mean_raw": 3922.5,
+      "mean_before_calibration_ma": 19.808,
+      "all_status_clear": true,
+      "role": "calibration"
+    }
+  ],
+  "raw_4ma_x10": 2331,
+  "raw_20ma_x10": 39225,
+  "ua_per_count": 4.336748522795035,
+  "offset_ua": 2989.1039193364777,
+  "flashed_by_this_change": false
+}

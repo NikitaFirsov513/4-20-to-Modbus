@@ -1,6 +1,9 @@
 #include "LedTask.h"
+#include "Health.h"
+#include "ModbusRegisters.h"
 
 #include "stm32f103xb.h"
+#include "main.h"
 
 #include "FreeRTOS.h"
 #include "queue.h"
@@ -24,7 +27,10 @@ void LedTaskStart(void)
 
     messageQueue = xQueueCreate(QUEUE_SIZE, sizeof(uint8_t));
 
-    xTaskCreate(LedTask, "led", 256, NULL, 2, NULL);
+    TaskHandle_t handle;
+    if (!messageQueue || xTaskCreate(LedTask, "led", 256, NULL, 2, &handle) != pdPASS)
+        Error_Handler();
+    Health_RegisterTask(HEALTH_LED,handle);
 }
 
 void LedTask_SendMessage(uint8_t message)
@@ -57,6 +63,7 @@ static void LedTask(void *pvParameters)
 
     for (;;)
     {
+        Health_Heartbeat(HEALTH_LED);
         if (xQueueReceive(messageQueue, &message, pdMS_TO_TICKS(100)) == pdPASS)
         {
             blinkMessage(message);
@@ -68,7 +75,12 @@ static void LedTask(void *pvParameters)
              {
                  resetLight();
 
-                 setGreenLight();
+                 ADC_data_t adc;
+                 modbus_snapshot_adc(&adc);
+                 if (adc.status & (ADC_STATUS_STALE | ADC_STATUS_DMA_ERROR | ADC_STATUS_LOOP_OPEN | ADC_STATUS_SATURATED))
+                     setRedLight();
+                 else if (App_DefaultsForced()) setBlueLight();
+                 else setGreenLight();
                  vTaskDelay(pdMS_TO_TICKS(600));
 
                  resetLight();
@@ -96,25 +108,18 @@ static void blinkMessage(uint8_t message)
         break;
     }
 
-    case LED_ERROR_CRC: {
-
+    case LED_ERROR_CRC:
+    case LED_ERROR_ADDRESS:
+    case LED_ERROR_FORMAT:
+        setRedLight();
+        vTaskDelay(pdMS_TO_TICKS(150));
+        resetLight();
         break;
-    }
-
-    case LED_ERROR_ADDRESS: {
-
+    case LED_ERROR_SPEED:
+        setBlueLight();
+        vTaskDelay(pdMS_TO_TICKS(150));
+        resetLight();
         break;
-    }
-
-    case LED_ERROR_FORMAT: {
-
-        break;
-    }
-
-    case LED_ERROR_SPEED: {
-
-        break;
-    }
 
     default: {
         break;

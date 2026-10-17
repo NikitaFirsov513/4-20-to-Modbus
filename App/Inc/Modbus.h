@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
-#include "stm32f103xb.h"
+#define MODBUS_MAX_ADU 256U
 
 void modbus_init(void);
 
@@ -25,7 +25,6 @@ uint8_t modbus_write_multiple_registers(uint8_t slave_addr,
                                         uint8_t *data,
                                         uint8_t *tx,
                                         uint16_t *tx_len);
-void modbus_send_response(uint8_t *frame, uint16_t len);
 
 uint16_t modbus_crc16(const uint8_t *frame, uint16_t len);
 bool modbus_verify_crc(const uint8_t *frame, uint16_t len);

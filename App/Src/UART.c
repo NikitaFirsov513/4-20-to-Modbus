@@ -1,426 +1,217 @@
 #include "UART.h"
+#include "Health.h"
 #include "Modbus.h"
 #include "ModbusRegisters.h"
 #include "Tim.h"
-#include "stdbool.h"
-#include "stdint.h"
+#include "LedTask.h"
+#include "FreeRTOS.h"
+#include "queue.h"
+#include "task.h"
 #include "stm32f1xx.h"
-#include <math.h>
+#include <string.h>
 
-static volatile uint8_t uart_tx_busy = 0;
+typedef struct { uint16_t len; uint8_t data[UART_RX_BUFFER_SIZE]; } RxFrame;
+static RxFrame rx;
+static QueueHandle_t frames;
+static uint8_t tx_buffer[UART_TX_BUFFER_SIZE];
+static volatile bool tx_busy;
+static volatile bool tx_failed;
+static bool rx_error;
+static uint16_t byte_timeout_us, frame_timeout_us;
+static uint32_t character_us;
 
-static bool is_frame_start = false;
-static bool is_frame_error = false;
-static uint16_t t1_us = 0;
-
-uint8_t uart_tx_buffer[UART_TX_BUFFER_SIZE];
-uint8_t uart_rx_buffer[UART_RX_BUFFER_SIZE];
-uint8_t rx_index = 0;
-
-void uart_init(uint32_t baudrate, uint16_t parity_bit, uint16_t stop_bit)
+static void receive_mode(void)
 {
-
-    RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
-    RCC->AHBENR |= RCC_AHBENR_DMA1EN;
-
-    Tim2_Init();
-    uart_dma_tx_init();
-    // uart_dma_rx_init();
-    t1_us = uart_calculate_us(baudrate, parity_bit, stop_bit);
-    uart_set_baudrate(baudrate);
-    uart_set_parity(parity_bit);
-    uart_cr_init();
-    uart_cr_start();
-
-    // uart_dma_rx_start();
-    //  Implementation for UART initialization
+    USART1->CR1 &= ~USART_CR1_TCIE;
+    GPIOA->BRR = GPIO_BRR_BR8; /* PA8: tied DE and /RE, low = receive. */
+    volatile uint32_t discard = USART1->SR;
+    discard = USART1->DR;
+    (void)discard;
+    USART1->CR1 |= USART_CR1_RE;
+    if (tx_busy && !tx_failed) Health_Increment(COUNT_TX_FRAMES);
+    tx_busy = false;
 }
 
-bool uart_change_setings()
+static void abort_tx(void)
 {
-    uart_cr_stop();
+    taskENTER_CRITICAL();
+    DMA1_Channel4->CCR &= ~DMA_CCR_EN;
+    USART1->CR3 &= ~USART_CR3_DMAT;
+    USART1->CR1 &= ~USART_CR1_TE;
+    receive_mode();
+    USART1->CR1 |= USART_CR1_TE;
+    taskEXIT_CRITICAL();
+}
 
-    uart_set_baudrate(get_baud_from_code(connection_data_active.baudrate_code));
-    uart_set_parity(connection_data_active.parity_code);
-    uart_set_stopbits(connection_data_active.stop_bits);
-    uart_cr_start();
+static void UartTask(void *argument)
+{
+    (void)argument;
+    RxFrame frame;
+    uint8_t response[MODBUS_MAX_ADU];
+    for (;;) {
+        Health_Heartbeat(HEALTH_UART);
+        if (xQueueReceive(frames, &frame, pdMS_TO_TICKS(100U)) != pdPASS) continue;
+        uint16_t len = 0U;
+        uint8_t result = modbus_read_frame(frame.data, frame.len, response, &len);
+        bool completed = true;
+        if (len && uart_send(response, len)) {
+            TickType_t started = xTaskGetTickCount();
+            TickType_t timeout = pdMS_TO_TICKS((character_us * len + 999U) / 1000U + 50U);
+            while (uart_is_busy()) {
+                Health_Heartbeat(HEALTH_UART);
+                if ((TickType_t)(xTaskGetTickCount() - started) > timeout) {
+                    Health_Increment(COUNT_TX_TIMEOUTS);
+                    abort_tx();
+                    tx_failed = true;
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(1));
+            }
+            completed = !tx_failed;
+        } else if (len) completed = false;
+        /* TC has released DE; acknowledgements use the old line parameters. */
+        if (completed) modbus_apply_pending_config();
+        else modbus_cancel_pending_config();
+        LedTask_SendMessage(!completed ? LED_ERROR_SPEED : result == MB_EX_NONE ? LED_MESSAGE_OK : LED_ERROR_FORMAT);
+    }
+}
+
+bool uart_task_start(void)
+{
+    frames = xQueueCreate(2U, sizeof(RxFrame));
+    if (!frames) return false;
+    TaskHandle_t handle;
+    if (xTaskCreate(UartTask,"modbus",640U,NULL,3U,&handle) != pdPASS) return false;
+    Health_RegisterTask(HEALTH_UART,handle);
     return true;
 }
 
+uint16_t uart_calculate_us(uint32_t baudrate, uint16_t parity, uint16_t stop_bits)
+{
+    if (!baudrate) return 0U;
+    uint32_t bits = 1U + 8U + (parity != MB_PARITY_NONE ? 1U : 0U) + stop_bits;
+    return (uint16_t)((bits * 1000000UL + baudrate - 1U) / baudrate);
+}
+
+void uart_init(uint32_t baudrate, uint16_t parity, uint16_t stop_bits)
+{
+    RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
+    RCC->AHBENR |= RCC_AHBENR_DMA1EN;
+    Tim2_Init();
+    USART1->CR1 = 0U;
+    USART1->CR2 = stop_bits == 2U ? USART_CR2_STOP_1 : 0U;
+    USART1->CR3 = USART_CR3_EIE;
+    USART1->BRR = (UART_PCLK_HZ + baudrate / 2U) / baudrate;
+    uint32_t cr1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE;
+    if (parity != MB_PARITY_NONE) {
+        cr1 |= USART_CR1_M | USART_CR1_PCE | USART_CR1_PEIE;
+        if (parity == MB_PARITY_ODD) cr1 |= USART_CR1_PS;
+    }
+    character_us = uart_calculate_us(baudrate, parity, stop_bits);
+    /* RXNE occurs at the end of a character. Compare end-to-end time:
+     * maximum idle gap t1.5 plus the duration of the next character. */
+    byte_timeout_us = baudrate > 19200U ? 750U + character_us : (5U * character_us + 1U) / 2U;
+    frame_timeout_us = baudrate > 19200U ? 1750U : (7U * character_us + 1U) / 2U;
+    rx.len = 0U; rx_error = false; tx_busy = false;
+    GPIOA->BRR = GPIO_BRR_BR8;
+    DMA1_Channel4->CCR = DMA_CCR_DIR | DMA_CCR_MINC | DMA_CCR_TCIE | DMA_CCR_TEIE | DMA_CCR_PL_1;
+    DMA1_Channel4->CPAR = (uint32_t)&USART1->DR;
+    DMA1_Channel4->CMAR = (uint32_t)tx_buffer;
+    DMA1->IFCR = DMA_IFCR_CGIF4;
+    NVIC_SetPriority(DMA1_Channel4_IRQn, 5U);
+    NVIC_ClearPendingIRQ(DMA1_Channel4_IRQn);
+    NVIC_EnableIRQ(DMA1_Channel4_IRQn);
+    NVIC_SetPriority(USART1_IRQn, 5U);
+    NVIC_ClearPendingIRQ(USART1_IRQn);
+    NVIC_EnableIRQ(USART1_IRQn);
+    USART1->CR1 = cr1 | USART_CR1_UE;
+}
+
+bool uart_change_setings(void)
+{
+    if (tx_busy || !modbus_config_valid(&connection_data_active)) return false;
+    taskENTER_CRITICAL();
+    Tim2_Stop();
+    uart_init(get_baud_from_code(connection_data_active.baudrate_code),
+              connection_data_active.parity_code, connection_data_active.stop_bits);
+    xQueueReset(frames); /* Queued requests belong to the old configuration. */
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool uart_is_busy(void) { return tx_busy; }
+
 uint8_t uart_send(const uint8_t *data, uint16_t len)
 {
-    if ((data == 0) || (len == 0U) || (len > UART_TX_BUFFER_SIZE))
-    {
-        return 0U;
-    }
-
-    if (uart_tx_busy)
-    {
-        return 0U;
-    }
-
-    uart_tx_busy = 1U;
-
-    for (uint16_t i = 0; i < len; i++)
-    {
-        uart_tx_buffer[i] = data[i];
-    }
-
-    uart_dma_tx_start(len);
-
+    if (!data || !len || len > sizeof(tx_buffer)) return 0U;
+    taskENTER_CRITICAL();
+    if (tx_busy) { taskEXIT_CRITICAL(); return 0U; }
+    tx_busy = true;
+    tx_failed = false;
+    memcpy(tx_buffer, data, len);
+    Tim2_Stop();
+    rx.len = 0U; rx_error = false;
+    USART1->CR1 &= ~USART_CR1_RE;
+    GPIOA->BSRR = GPIO_BSRR_BS8; /* Drive DE high before the first start bit. */
+    __DSB();
+    /* CA-IS2092VW tPZH/tPZL max 800 ns. At 64 MHz these 128 NOPs
+     * provide at least 2 us, independently of loop/Flash wait-state overhead. */
+    for (uint32_t i = 0U; i < 128U; ++i) __NOP();
+    DMA1_Channel4->CCR &= ~DMA_CCR_EN;
+    DMA1->IFCR = DMA_IFCR_CGIF4;
+    DMA1_Channel4->CNDTR = len;
+    USART1->SR = ~USART_SR_TC;
+    USART1->CR3 |= USART_CR3_DMAT;
+    DMA1_Channel4->CCR |= DMA_CCR_EN;
+    taskEXIT_CRITICAL();
     return 1U;
 }
 
 void uart_irq_handler(void)
 {
     uint32_t sr = USART1->SR;
-
-    if (sr & USART_SR_ORE)
-    {
-        volatile uint32_t tmp = USART1->DR;
-        (void)tmp;
-
-        is_frame_error = true;
-
-        return;
-    }
-
-    if (sr & USART_SR_RXNE)
-    {
-        uint8_t byte = (uint8_t)USART1->DR;
-
-        uint16_t rx_byte_timeout = 5U * t1_us / 2U;
-        uint16_t frame_timeout = 9U * t1_us / 2U;
-
-        if (is_frame_start)
-        {
-            uint16_t counter = TIM2->CNT;
-
-            if (counter > rx_byte_timeout)
-            {
-                is_frame_error = true;
+    if (sr & (USART_SR_RXNE | USART_SR_ORE | USART_SR_FE | USART_SR_NE | USART_SR_PE)) {
+        uint8_t byte = (uint8_t)USART1->DR; /* SR then DR clears receive errors. */
+        if (!tx_busy) {
+            if (sr & (USART_SR_ORE | USART_SR_FE | USART_SR_NE | USART_SR_PE)) {
+                rx_error = true; Health_Increment(COUNT_UART_ERRORS);
             }
-
-            if (rx_index < UART_RX_BUFFER_SIZE)
-            {
-                uart_rx_buffer[rx_index++] = byte;
+            if (rx.len && TIM2->CNT > byte_timeout_us) { rx_error = true; Health_Increment(COUNT_UART_ERRORS); }
+            if (sr & USART_SR_RXNE) {
+                Health_Increment(COUNT_RX_BYTES);
+                if (rx.len < sizeof(rx.data)) rx.data[rx.len++] = byte;
+                else { rx_error = true; Health_Increment(COUNT_RX_OVERFLOW); }
             }
-            else
-            {
-                is_frame_error = true;
-            }
-
-            Tim2_Start(frame_timeout);
-        }
-        else
-        {
-            if (rx_index < UART_RX_BUFFER_SIZE)
-            {
-                uart_rx_buffer[rx_index++] = byte;
-            }
-            else
-            {
-                is_frame_error = true;
-            }
-
-            is_frame_start = true;
-
-            Tim2_Start(frame_timeout);
+            Tim2_Start(frame_timeout_us);
         }
     }
-}
-
-static void clear_rx_array(void)
-{
-
-    for (uint8_t i = 0; i < rx_index; i++)
-    {
-        uart_rx_buffer[i] = 0U;
-    }
-    rx_index = 0;
+    if ((sr & USART_SR_TC) && (USART1->CR1 & USART_CR1_TCIE)) receive_mode();
 }
 
 void uart_tim2_irq_handler(void)
 {
-    // тут обработака кадра
-    // если больше чем нужно то отбрасываем кадр
-    // если кадр норм то читаем и вызваем отбработчик
-    // если нет то мигаем светодиодом
-
-    if ((rx_index > 0U) && (rx_index <= UART_RX_BUFFER_SIZE))
-    {
-        uint16_t uart_tx_len = 0U;
-        uint8_t result = modbus_read_frame(uart_rx_buffer, rx_index, uart_tx_buffer, &uart_tx_len);
-        if (result == MB_EX_NONE && !is_frame_error)
-        {
-            uart_send(uart_tx_buffer, uart_tx_len);
+    BaseType_t wake = pdFALSE;
+    if (rx.len && !rx_error && !tx_busy && frames) {
+        Health_Increment(COUNT_RX_FRAMES);
+        if (xQueueSendFromISR(frames, &rx, &wake) != pdPASS) {
+            Health_Increment(COUNT_QUEUE_OVERFLOW);
+            LedTask_SendMessageFromISR(LED_ERROR_FORMAT);
         }
-        else
-        {
-            // ошибка
-        }
-        // rx_index = 0;
-        clear_rx_array();
-    }
-    is_frame_error = false;
-    is_frame_start = false;
-}
-
-uint16_t uart_calculate_us(uint32_t baudrate,
-                           uint16_t parity_bit,
-                           uint16_t stop_bit)
-{
-    uint8_t Nstop;
-
-    if (stop_bit > 1U)
-    {
-        Nstop = 2U;
-    }
-    else
-    {
-        Nstop = 1U;
-    }
-
-    uint16_t N = 1U + 8U + parity_bit + Nstop;
-
-    uint16_t t =
-        (uint16_t)(((uint32_t)N * 1000000U) / baudrate);
-
-    return t;
+    } else if (rx_error) LedTask_SendMessageFromISR(LED_ERROR_FORMAT);
+    rx.len = 0U; rx_error = false;
+    portYIELD_FROM_ISR(wake);
 }
 
 void uart_dma_tx_irq_handler(void)
 {
-    if (DMA1->ISR & DMA_ISR_TCIF4)
-    {
-        DMA1->IFCR = DMA_IFCR_CTCIF4;
-
+    uint32_t flags = DMA1->ISR;
+    if (flags & (DMA_ISR_TCIF4 | DMA_ISR_TEIF4)) {
+        if (flags & DMA_ISR_TEIF4) { tx_failed = true; Health_Increment(COUNT_TX_DMA_ERRORS); }
+        DMA1->IFCR = DMA_IFCR_CGIF4;
         DMA1_Channel4->CCR &= ~DMA_CCR_EN;
-
         USART1->CR3 &= ~USART_CR3_DMAT;
-
-        uart_tx_busy = 0U;
+        /* DMA TC means DR is filled, not that the stop bit has left TX.
+         * Also drain the serializer after DMA error before dropping DE. */
+        USART1->CR1 |= USART_CR1_TCIE;
     }
-
-    if (DMA1->ISR & DMA_ISR_TEIF4)
-    {
-        DMA1->IFCR = DMA_IFCR_CTEIF4;
-
-        DMA1_Channel4->CCR &= ~DMA_CCR_EN;
-
-        USART1->CR3 &= ~USART_CR3_DMAT;
-
-        uart_tx_busy = 0U;
-    }
-}
-
-void uart_dma_rx_irq_handler(void)
-{
-    if (DMA1->ISR & DMA_ISR_TCIF5)
-    {
-        DMA1->IFCR = DMA_IFCR_CTCIF5;
-
-        /*
-         * RX DMA заполнил весь буфер.
-         * Для твоего теста просто перезапустим RX.
-         */
-        uart_dma_rx_start();
-    }
-
-    if (DMA1->ISR & DMA_ISR_TEIF5)
-    {
-        DMA1->IFCR = DMA_IFCR_CTEIF5;
-
-        uart_dma_rx_start();
-    }
-}
-
-static void uart_cr_init(void)
-{
-    USART1->CR1 &= ~USART_CR1_UE;
-
-    USART1->CR1 = 0;
-    USART1->CR2 = 0;
-    USART1->CR3 = 0;
-
-    USART1->CR1 |=
-        USART_CR1_TE |
-        USART_CR1_RE |
-        USART_CR1_RXNEIE;
-
-    // USART1->CR3 |= USART_CR3_DMAR;
-
-    NVIC_SetPriority(USART1_IRQn, 5);
-    NVIC_ClearPendingIRQ(USART1_IRQn);
-    NVIC_EnableIRQ(USART1_IRQn);
-}
-
-static void uart_cr_start(void)
-{ // включение UART
-    USART1->CR1 |= USART_CR1_UE;
-}
-
-static void uart_cr_stop(void)
-{ // включение UART
-    USART1->CR1 &= ~USART_CR1_UE;
-}
-
-static void uart_set_baudrate(uint32_t baudrate)
-{
-    if (baudrate == 0U)
-    {
-        return;
-    }
-
-    uint32_t brr = (UART_PCLK_HZ + (baudrate / 2U)) / baudrate;
-
-    USART1->BRR = (uint16_t)brr;
-}
-
-static void uart_set_parity(uint16_t parity)
-{
-    switch (parity)
-    {
-    case MB_PARITY_NONE:
-        USART1->CR1 &= ~USART_CR1_PCE;
-        break;
-
-    case MB_PARITY_EVEN:
-        USART1->CR1 |= USART_CR1_PCE;
-        USART1->CR1 &= ~USART_CR1_PS;
-        USART1->CR1 |= USART_CR1_M;
-        break;
-
-    case MB_PARITY_ODD:
-        USART1->CR1 |= USART_CR1_PCE;
-        USART1->CR1 |= USART_CR1_PS;
-        USART1->CR1 |= USART_CR1_M;
-        break;
-
-    default:
-        USART1->CR1 &= ~USART_CR1_PCE;
-        break;
-    }
-}
-
-static void uart_set_stopbits(uint16_t stop_bits)
-{
-
-    // 00 → 1 stop bit 01 → 0.5 stop bit 10 → 2 stop bits 11 → 1.5 stop bit
-    switch (stop_bits)
-    {
-    case 0U:
-        /* code */
-        USART1->CR2 &= ~USART_CR2_STOP_1;
-        USART1->CR2 &= ~USART_CR2_STOP;
-        break;
-    case 1U:
-        /* code */
-        USART1->CR2 &= ~USART_CR2_STOP_1;
-        USART1->CR2 |= USART_CR2_STOP;
-        break;
-    case 2U:
-        /* code */
-        USART1->CR2 |= USART_CR2_STOP_1;
-        USART1->CR2 &= ~USART_CR2_STOP;
-        break;
-    case 3U:
-        /* code */
-        USART1->CR2 |= USART_CR2_STOP_1;
-        USART1->CR2 |= USART_CR2_STOP;
-        break;
-    default:
-        break;
-    }
-}
-
-static void uart_dma_init(void)
-{
-
-    uart_dma_tx_init();
-    uart_dma_rx_init();
-    uart_dma_rx_start();
-}
-
-static void uart_dma_tx_init(void)
-{
-    // TX
-    DMA1->IFCR = DMA_IFCR_CGIF4 |
-                 DMA_IFCR_CTCIF4 |
-                 DMA_IFCR_CHTIF4 |
-                 DMA_IFCR_CTEIF4;
-    DMA1_Channel4->CCR = 0;
-    DMA1_Channel4->CCR |= DMA_CCR_TCIE;
-    DMA1_Channel4->CCR |= DMA_CCR_TEIE;
-    NVIC_SetPriority(DMA1_Channel4_IRQn, 5);
-    NVIC_EnableIRQ(DMA1_Channel4_IRQn);
-    DMA1_Channel4->CCR |= DMA_CCR_DIR;
-    DMA1_Channel4->CCR |= DMA_CCR_MINC;
-    DMA1_Channel4->CCR |= DMA_CCR_PL_1;
-    DMA1_Channel4->CPAR = (uint32_t)&USART1->DR;
-    DMA1_Channel4->CMAR = (uint32_t)uart_tx_buffer;
-}
-
-static void uart_dma_tx_start(uint16_t len)
-{
-
-    if ((len == 0U) || (len > UART_TX_BUFFER_SIZE))
-    {
-        return;
-    }
-
-    DMA1_Channel4->CCR &= ~DMA_CCR_EN;
-
-    DMA1->IFCR = DMA_IFCR_CGIF4 |
-                 DMA_IFCR_CTCIF4 |
-                 DMA_IFCR_CHTIF4 |
-                 DMA_IFCR_CTEIF4;
-
-    DMA1_Channel4->CMAR = (uint32_t)uart_tx_buffer;
-    DMA1_Channel4->CNDTR = len;
-
-    USART1->CR3 |= USART_CR3_DMAT;
-
-    DMA1_Channel4->CCR |= DMA_CCR_EN;
-}
-
-static void uart_dma_rx_init(void)
-{
-    // RX
-    DMA1_Channel5->CCR &= ~DMA_CCR_EN;
-
-    DMA1->IFCR = DMA_IFCR_CGIF5 |
-                 DMA_IFCR_CTCIF5 |
-                 DMA_IFCR_CHTIF5 |
-                 DMA_IFCR_CTEIF5;
-
-    DMA1_Channel5->CCR = 0;
-
-    DMA1_Channel5->CPAR = (uint32_t)&USART1->DR;
-    DMA1_Channel5->CMAR = (uint32_t)uart_rx_buffer;
-    DMA1_Channel5->CNDTR = UART_RX_BUFFER_SIZE;
-
-    DMA1_Channel5->CCR =
-        DMA_CCR_TCIE |
-        DMA_CCR_TEIE |
-        DMA_CCR_MINC |
-        DMA_CCR_PL_1;
-
-    NVIC_SetPriority(DMA1_Channel5_IRQn, 5);
-    NVIC_EnableIRQ(DMA1_Channel5_IRQn);
-}
-
-static void uart_dma_rx_start(void)
-{
-    DMA1_Channel5->CCR &= ~DMA_CCR_EN;
-
-    DMA1->IFCR = DMA_IFCR_CGIF5 |
-                 DMA_IFCR_CTCIF5 |
-                 DMA_IFCR_CHTIF5 |
-                 DMA_IFCR_CTEIF5;
-
-    DMA1_Channel5->CMAR = (uint32_t)uart_rx_buffer;
-    DMA1_Channel5->CNDTR = UART_RX_BUFFER_SIZE;
-
-    DMA1_Channel5->CCR |= DMA_CCR_EN;
 }

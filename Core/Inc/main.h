@@ -70,6 +70,12 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 
 /* USER CODE BEGIN Private defines */
+#define RS485_DE_RE_Pin LL_GPIO_PIN_8
+#define RS485_DE_RE_GPIO_Port GPIOA
+#define DEFAULT_SETTINGS_Pin LL_GPIO_PIN_15
+#define DEFAULT_SETTINGS_GPIO_Port GPIOA
+#define LOOP_FAULT_Pin LL_GPIO_PIN_1
+#define LOOP_FAULT_GPIO_Port GPIOA
 
 /* USER CODE END Private defines */
 

@@ -7,13 +7,13 @@
 extern uint32_t SystemCoreClock;
 
 #define configUSE_PREEMPTION                    1
-#define configUSE_IDLE_HOOK                     0
+#define configUSE_IDLE_HOOK                     1
 #define configUSE_TICK_HOOK                     0
 #define configCPU_CLOCK_HZ                      ( SystemCoreClock )
 #define configTICK_RATE_HZ                      ( ( TickType_t ) 1000 )
 #define configMAX_PRIORITIES                    5
 #define configMINIMAL_STACK_SIZE                ( ( unsigned short ) 128 )
-#define configTOTAL_HEAP_SIZE                   ( ( size_t ) ( 6 * 1024 ) )
+#define configTOTAL_HEAP_SIZE                   ( ( size_t ) ( 10 * 1024 ) )
 #define configMAX_TASK_NAME_LEN                 12
 #define configUSE_16_BIT_TICKS                  0
 #define configIDLE_SHOULD_YIELD                 1
@@ -51,15 +51,17 @@ extern uint32_t SystemCoreClock;
 #define INCLUDE_vTaskDelayUntil                 1
 #define INCLUDE_vTaskDelay                      1
 #define INCLUDE_xTaskGetSchedulerState          1
+#define INCLUDE_uxTaskGetStackHighWaterMark      1
 
 #define vPortSVCHandler                         SVC_Handler
 #define xPortPendSVHandler                      PendSV_Handler
 
+extern void Health_AssertFailed(void);
+
 #define configASSERT(x)                         \
     if ((x) == 0)                               \
     {                                           \
-        taskDISABLE_INTERRUPTS();               \
-        for (;;) {}                             \
+        Health_AssertFailed();                  \
     }
 
 #endif

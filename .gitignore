@@ -13,3 +13,8 @@
 # eide template
 *.ept
 *.eide-template
+
+# STM32CubeIDE generated output
+/Debug
+/Release
+__pycache__/

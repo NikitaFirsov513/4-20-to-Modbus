@@ -25,6 +25,7 @@
 
 #include "FreeRTOS.h"
 #include "Sensor.h"
+#include "Health.h"
 #include "UART.h"
 #include "task.h"
 /* USER CODE END Includes */
@@ -76,14 +77,7 @@ extern TIM_HandleTypeDef htim4;
  */
 void NMI_Handler(void)
 {
-    /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
-
-    /* USER CODE END NonMaskableInt_IRQn 0 */
-    /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
-    while (1)
-    {
-    }
-    /* USER CODE END NonMaskableInt_IRQn 1 */
+    Health_Panic(FAULT_NMI);
 }
 
 /**
@@ -91,14 +85,7 @@ void NMI_Handler(void)
  */
 void HardFault_Handler(void)
 {
-    /* USER CODE BEGIN HardFault_IRQn 0 */
-
-    /* USER CODE END HardFault_IRQn 0 */
-    while (1)
-    {
-        /* USER CODE BEGIN W1_HardFault_IRQn 0 */
-        /* USER CODE END W1_HardFault_IRQn 0 */
-    }
+    Health_Panic(FAULT_HARD);
 }
 
 /**
@@ -106,14 +93,7 @@ void HardFault_Handler(void)
  */
 void MemManage_Handler(void)
 {
-    /* USER CODE BEGIN MemoryManagement_IRQn 0 */
-
-    /* USER CODE END MemoryManagement_IRQn 0 */
-    while (1)
-    {
-        /* USER CODE BEGIN W1_MemoryManagement_IRQn 0 */
-        /* USER CODE END W1_MemoryManagement_IRQn 0 */
-    }
+    Health_Panic(FAULT_MEMORY);
 }
 
 /**
@@ -121,14 +101,7 @@ void MemManage_Handler(void)
  */
 void BusFault_Handler(void)
 {
-    /* USER CODE BEGIN BusFault_IRQn 0 */
-
-    /* USER CODE END BusFault_IRQn 0 */
-    while (1)
-    {
-        /* USER CODE BEGIN W1_BusFault_IRQn 0 */
-        /* USER CODE END W1_BusFault_IRQn 0 */
-    }
+    Health_Panic(FAULT_BUS);
 }
 
 /**
@@ -136,14 +109,7 @@ void BusFault_Handler(void)
  */
 void UsageFault_Handler(void)
 {
-    /* USER CODE BEGIN UsageFault_IRQn 0 */
-
-    /* USER CODE END UsageFault_IRQn 0 */
-    while (1)
-    {
-        /* USER CODE BEGIN W1_UsageFault_IRQn 0 */
-        /* USER CODE END W1_UsageFault_IRQn 0 */
-    }
+    Health_Panic(FAULT_USAGE);
 }
 
 /**
@@ -224,8 +190,4 @@ void DMA1_Channel4_IRQHandler(void)
     uart_dma_tx_irq_handler();
 }
 
-void DMA1_Channel5_IRQHandler(void)
-{
-    uart_dma_rx_irq_handler();
-}
 /* USER CODE END 1 */

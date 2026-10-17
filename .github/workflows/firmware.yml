@@ -1,0 +1,32 @@
+name: Firmware
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install ARM toolchain and emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ripgrep
+          python -m pip install -r tests/requirements.txt
+      - name: Build Debug
+        shell: pwsh
+        run: ./tools/build.ps1 -Configuration Debug -Toolchain /usr/bin
+      - name: Build Release
+        shell: pwsh
+        run: ./tools/build.ps1 -Configuration Release -Toolchain /usr/bin
+      - name: Run ARM regression tests
+        run: python tests/run.py --toolchain /usr/bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            build/verify-*/*.elf
+            build/verify-*/*.hex
+            build/verify-*/*.map

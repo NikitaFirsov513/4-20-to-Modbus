@@ -1,5 +1,5 @@
 version: "4.1"
-name: firstPlate
+name: 4-20-to-Modbus
 type: ARM
 deviceName: null
 packDir: null
@@ -58,7 +58,7 @@ targets:
             optimization: level-debug
             warnings: all-warnings
           global:
-            $float-abi-type: hard
+            $float-abi-type: soft
             misc-control: []
             not-use-syscalls: true
             output-debug-info: enable
@@ -111,7 +111,7 @@ targets:
   Release:
     cppPreprocessAttrs:
       defineList:
-        - USE_HAL_DRIVER
+        - USE_FULL_LL_DRIVER
         - STM32F103xB
       incList:
         - Core/Inc
@@ -119,6 +119,9 @@ targets:
         - Drivers/STM32F1xx_HAL_Driver/Inc/Legacy
         - Drivers/CMSIS/Device/ST/STM32F1xx/Include
         - Drivers/CMSIS/Include
+        - App/Inc
+        - App/RTOS/include
+        - App/RTOS/portable/GCC/ARM_CM3
       libList: []
     excludeList: []
     settings: {}
@@ -144,7 +147,7 @@ targets:
             optimization: level-debug
             warnings: all-warnings
           global:
-            $float-abi-type: hard
+            $float-abi-type: soft
             misc-control: []
             not-use-syscalls: true
             output-debug-info: enable
